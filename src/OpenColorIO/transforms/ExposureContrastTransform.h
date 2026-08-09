@@ -56,6 +56,9 @@ public:
 
     double getPivot() const override;
     void setPivot(double pivot) override;
+    bool isPivotDynamic() const override;
+    void makePivotDynamic() override;
+    void makePivotNonDynamic() override;
 
     double getLogExposureStep() const override;
     void setLogExposureStep(double logExposureStep) override;

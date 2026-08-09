@@ -19,6 +19,7 @@ namespace
 static constexpr char EC_EXPOSURE[] = "exposureVal";
 static constexpr char EC_CONTRAST[] = "contrastVal";
 static constexpr char EC_GAMMA[]    = "gammaVal";
+static constexpr char EC_PIVOT[]    = "pivotVal";
 
 void AddUniform(GpuShaderCreatorRcPtr & shaderCreator,
                 DynamicPropertyDoubleRcPtr prop,
@@ -78,16 +79,100 @@ std::string AddProperty(GpuShaderCreatorRcPtr & shaderCreator,
     return finalName;
 }
 
+// Not routed through AddProperty, whose non-dynamic branch would declare a local holding the
+// raw pivot and so change the source generated for every existing caller.  Returns the uniform
+// name, or empty if the pivot stays a literal.
+std::string AddPivotProperty(GpuShaderCreatorRcPtr & shaderCreator,
+                             ConstExposureContrastOpDataRcPtr & ec)
+{
+    auto prop = ec->getPivotProperty();
+
+    if (!prop->isDynamic())
+    {
+        return "";
+    }
+
+    if (shaderCreator->getLanguage() == LANGUAGE_OSL_1)
+    {
+        LogWarning("The dynamic properties are not yet supported by the 'Open Shading language"
+                   " (OSL)' translation: The 'pivotVal' dynamic property is replaced by a "
+                   "constant.");
+        return "";
+    }
+
+    const std::string finalName = BuildResourceName(shaderCreator, "exposure_contrast", EC_PIVOT);
+
+    auto shaderProp = prop->createEditableCopy();
+    DynamicPropertyRcPtr newProp = shaderProp;
+    shaderCreator->addDynamicProperty(newProp);
+
+    AddUniform(shaderCreator, DynamicPropertyValue::AsDouble(newProp), finalName);
+
+    return finalName;
+}
+
+// Declares the converted pivot for the linear styles and returns the float3 expression to use.
+std::string AddLinearPivot(GpuShaderText & st,
+                           ConstExposureContrastOpDataRcPtr & ec,
+                           const std::string & pivotName)
+{
+    if (pivotName.empty())
+    {
+        return st.float3Const(std::max(EC::MIN_PIVOT, ec->getPivot()));
+    }
+
+    st.newLine() << st.floatDecl("pivot") << " = max( " << EC::MIN_PIVOT << ", "
+                                          << pivotName << " );";
+    return st.float3Const("pivot");
+}
+
+// As above for the video styles, where the pivot is raised to the OETF power.
+std::string AddVideoPivot(GpuShaderText & st,
+                          ConstExposureContrastOpDataRcPtr & ec,
+                          const std::string & pivotName)
+{
+    if (pivotName.empty())
+    {
+        return st.float3Const(std::pow(std::max(EC::MIN_PIVOT, ec->getPivot()),
+                                       EC::VIDEO_OETF_POWER));
+    }
+
+    st.newLine() << st.floatDecl("pivot") << " = pow( max( " << EC::MIN_PIVOT << ", "
+                                          << pivotName << " ), "
+                                          << EC::VIDEO_OETF_POWER << " );";
+    return st.float3Const("pivot");
+}
+
+// As above for the log styles.  Declares a scalar rather than a float3, and returns an empty
+// name when static since the caller emits the precomputed literal itself.
+std::string AddLogPivot(GpuShaderText & st,
+                        ConstExposureContrastOpDataRcPtr & ec,
+                        const std::string & pivotName)
+{
+    if (pivotName.empty())
+    {
+        return "";
+    }
+
+    st.newLine() << st.floatDecl("logPivot") << " = max( 0.0, log2( max( " << EC::MIN_PIVOT
+                                             << ", " << pivotName << " ) / 0.18 ) * "
+                                             << ec->getLogExposureStep() << " + "
+                                             << ec->getLogMidGray() << " );";
+    return "logPivot";
+}
+
 void AddProperties(GpuShaderCreatorRcPtr & shaderCreator,
                    GpuShaderText & st,
                    ConstExposureContrastOpDataRcPtr & ec,
                    std::string & exposureName,
                    std::string & contrastName,
-                   std::string & gammaName)
+                   std::string & gammaName,
+                   std::string & pivotName)
 {
     exposureName = AddProperty(shaderCreator, st, ec->getExposureProperty(), EC_EXPOSURE);
     contrastName = AddProperty(shaderCreator, st, ec->getContrastProperty(), EC_CONTRAST);
     gammaName    = AddProperty(shaderCreator, st, ec->getGammaProperty(),    EC_GAMMA);
+    pivotName    = AddPivotProperty(shaderCreator, ec);
 }
 
 void AddECLinearShader(GpuShaderCreatorRcPtr & shaderCreator,
@@ -95,13 +180,13 @@ void AddECLinearShader(GpuShaderCreatorRcPtr & shaderCreator,
                        ConstExposureContrastOpDataRcPtr & ec,
                        const std::string & exposureName,
                        const std::string & contrastName,
-                       const std::string & gammaName)
+                       const std::string & gammaName,
+                       const std::string & pivotName)
 {
-    const double pivot = std::max(EC::MIN_PIVOT, ec->getPivot());
-
     st.newLine() << st.floatDecl("exposure") << " = pow( 2., " << exposureName << " );";
     st.newLine() << st.floatDecl("contrast") << " = max( " << EC::MIN_CONTRAST << ", "
                                              << "( " << contrastName << " * " << gammaName << " ) );";
+    const std::string pivotExpr = AddLinearPivot(st, ec, pivotName);
     st.newLine() << shaderCreator->getPixelName() << ".rgb = "
                  << shaderCreator->getPixelName() << ".rgb * exposure;";
 
@@ -114,11 +199,11 @@ void AddECLinearShader(GpuShaderCreatorRcPtr & shaderCreator,
                      <<   "pow( "
                      <<     "max( "
                      <<       st.float3Const(0.0f) << ", "
-                     <<       shaderCreator->getPixelName() << ".rgb / " << st.float3Const(pivot)
+                     <<       shaderCreator->getPixelName() << ".rgb / " << pivotExpr
                      <<     " ), "
                      <<     st.float3Const("contrast")
                      <<   " ) * "
-                     <<   st.float3Const(pivot) << ";";
+                     <<   pivotExpr << ";";
         st.dedent();
     }
     st.newLine() << "}";
@@ -129,13 +214,13 @@ void AddECLinearRevShader(GpuShaderCreatorRcPtr & shaderCreator,
                           ConstExposureContrastOpDataRcPtr & ec,
                           const std::string & exposureName,
                           const std::string & contrastName,
-                          const std::string & gammaName)
+                          const std::string & gammaName,
+                          const std::string & pivotName)
 {
-    const double pivot = std::max(EC::MIN_PIVOT, ec->getPivot());
-
     st.newLine() << st.floatDecl("exposure") << " = pow( 2., " << exposureName << " );";
     st.newLine() << st.floatDecl("contrast") << " = 1. / max( " << EC::MIN_CONTRAST << ", "
                                              << "( " << contrastName << " * " << gammaName << " ) );";
+    const std::string pivotExpr = AddLinearPivot(st, ec, pivotName);
 
     st.newLine() << "if (contrast != 1.0)";
     st.newLine() << "{";
@@ -146,11 +231,11 @@ void AddECLinearRevShader(GpuShaderCreatorRcPtr & shaderCreator,
                      <<   "pow( "
                      <<      "max( "
                      <<         st.float3Const(0.0f) << ", "
-                     <<         shaderCreator->getPixelName() << ".rgb / " << st.float3Const(pivot)
+                     <<         shaderCreator->getPixelName() << ".rgb / " << pivotExpr
                      <<      " ), "
                      <<      st.float3Const("contrast")
                      <<    " ) * "
-                     <<    st.float3Const(pivot) << ";";
+                     <<    pivotExpr << ";";
         st.dedent();
     }
     st.newLine() << "}";
@@ -164,14 +249,14 @@ void AddECVideoShader(GpuShaderCreatorRcPtr & shaderCreator,
                       ConstExposureContrastOpDataRcPtr & ec,
                       const std::string & exposureName,
                       const std::string & contrastName,
-                      const std::string & gammaName)
+                      const std::string & gammaName,
+                      const std::string & pivotName)
 {
-    double pivot = std::pow(std::max(EC::MIN_PIVOT, ec->getPivot()), EC::VIDEO_OETF_POWER);
-
     st.newLine() << st.floatDecl("exposure") << " = pow( pow( 2., " << exposureName << " ), "
                                              << EC::VIDEO_OETF_POWER << ");";
     st.newLine() << st.floatDecl("contrast") << " = max( " << EC::MIN_CONTRAST << ", "
                                              << "( " << contrastName << " * " << gammaName << " ) );";
+    const std::string pivotExpr = AddVideoPivot(st, ec, pivotName);
     st.newLine() << shaderCreator->getPixelName() << ".rgb = "
                  << shaderCreator->getPixelName() << ".rgb * exposure;";
     st.newLine() << "if (contrast != 1.0)";
@@ -183,11 +268,11 @@ void AddECVideoShader(GpuShaderCreatorRcPtr & shaderCreator,
                      <<   "pow( "
                      <<     "max( "
                      <<       st.float3Const(0.0f) << ", "
-                     <<       shaderCreator->getPixelName() << ".rgb / " << st.float3Const(pivot)
+                     <<       shaderCreator->getPixelName() << ".rgb / " << pivotExpr
                      <<     " ), "
                      <<     st.float3Const("contrast")
                      <<   " ) * "
-                     <<   st.float3Const(pivot) << ";";
+                     <<   pivotExpr << ";";
         st.dedent();
     }
     st.newLine() << "}";
@@ -198,14 +283,14 @@ void AddECVideoRevShader(GpuShaderCreatorRcPtr & shaderCreator,
                          ConstExposureContrastOpDataRcPtr & ec,
                          const std::string & exposureName,
                          const std::string & contrastName,
-                         const std::string & gammaName)
+                         const std::string & gammaName,
+                         const std::string & pivotName)
 {
-    double pivot = std::pow(std::max(EC::MIN_PIVOT, ec->getPivot()), EC::VIDEO_OETF_POWER);
-
     st.newLine() << st.floatDecl("exposure") << " = pow( pow( 2., " << exposureName << " ), "
                                              << EC::VIDEO_OETF_POWER << ");";
     st.newLine() << st.floatDecl("contrast") << " = 1. / max( " << EC::MIN_CONTRAST << ", "
                                              << "( " << contrastName << " * " << gammaName << " ) );";
+    const std::string pivotExpr = AddVideoPivot(st, ec, pivotName);
 
     st.newLine() << "if (contrast != 1.0)";
     st.newLine() << "{";
@@ -216,11 +301,11 @@ void AddECVideoRevShader(GpuShaderCreatorRcPtr & shaderCreator,
                      <<   "pow( "
                      <<     "max( "
                      <<       st.float3Const(0.0f) << ", "
-                     <<       shaderCreator->getPixelName() << ".rgb / " << st.float3Const(pivot)
+                     <<       shaderCreator->getPixelName() << ".rgb / " << pivotExpr
                      <<     " ), "
                      <<     st.float3Const("contrast")
                      <<   " ) * "
-                     <<   st.float3Const(pivot) << ";";
+                     <<   pivotExpr << ";";
         st.dedent();
     }
     st.newLine() << "}";
@@ -234,19 +319,30 @@ void AddECLogarithmicShader(GpuShaderCreatorRcPtr & shaderCreator,
                             ConstExposureContrastOpDataRcPtr & ec,
                             const std::string & exposureName,
                             const std::string & contrastName,
-                            const std::string & gammaName)
+                            const std::string & gammaName,
+                            const std::string & pivotName)
 {
-    double pivot = std::max(EC::MIN_PIVOT, ec->getPivot());
-    float logPivot = (float)std::max(0., std::log2(pivot / 0.18) *
-                                         ec->getLogExposureStep() +
-                                         ec->getLogMidGray());
-
     st.newLine() << st.floatDecl("exposure") << " = " << exposureName << " * "
                                              << ec->getLogExposureStep() << ";";
     st.newLine() << st.floatDecl("contrast") << " = max( " << EC::MIN_CONTRAST << ", "
                                              << "( " << contrastName << " * " << gammaName << " ) );";
-    st.newLine() << st.floatDecl("offset") << " = ( exposure - " << logPivot << " ) * contrast + "
-                                           << logPivot << ";";
+
+    const std::string logPivotName = AddLogPivot(st, ec, pivotName);
+    if (logPivotName.empty())
+    {
+        double pivot = std::max(EC::MIN_PIVOT, ec->getPivot());
+        float logPivot = (float)std::max(0., std::log2(pivot / 0.18) *
+                                             ec->getLogExposureStep() +
+                                             ec->getLogMidGray());
+
+        st.newLine() << st.floatDecl("offset") << " = ( exposure - " << logPivot
+                                               << " ) * contrast + " << logPivot << ";";
+    }
+    else
+    {
+        st.newLine() << st.floatDecl("offset") << " = ( exposure - " << logPivotName
+                                               << " ) * contrast + " << logPivotName << ";";
+    }
 
     st.newLine() << shaderCreator->getPixelName() << ".rgb = "
                  << shaderCreator->getPixelName() << ".rgb * contrast + offset;";
@@ -257,21 +353,32 @@ void AddECLogarithmicRevShader(GpuShaderCreatorRcPtr & shaderCreator,
                                ConstExposureContrastOpDataRcPtr & ec,
                                const std::string & exposureName,
                                const std::string & contrastName,
-                               const std::string & gammaName)
+                               const std::string & gammaName,
+                               const std::string & pivotName)
 {
-    double pivot = std::max(EC::MIN_PIVOT, ec->getPivot());
-    float logPivot = (float)std::max(0., std::log2(pivot / 0.18) *
-                                         ec->getLogExposureStep() +
-                                         ec->getLogMidGray());
-
     st.newLine() << st.floatDecl("exposure") << " = " << exposureName << " * "
                                              << ec->getLogExposureStep() << ";";
     st.newLine() << st.floatDecl("contrast") << " = max( " << EC::MIN_CONTRAST << ", "
                                              << "( " << contrastName << " * " << gammaName << " ) );";
-    st.newLine() << st.floatDecl("offset") << " = " << logPivot << " - " << logPivot 
-                                           << " / contrast - exposure;";
 
-    st.newLine() << shaderCreator->getPixelName() << ".rgb = " 
+    const std::string logPivotName = AddLogPivot(st, ec, pivotName);
+    if (logPivotName.empty())
+    {
+        double pivot = std::max(EC::MIN_PIVOT, ec->getPivot());
+        float logPivot = (float)std::max(0., std::log2(pivot / 0.18) *
+                                             ec->getLogExposureStep() +
+                                             ec->getLogMidGray());
+
+        st.newLine() << st.floatDecl("offset") << " = " << logPivot << " - " << logPivot
+                                               << " / contrast - exposure;";
+    }
+    else
+    {
+        st.newLine() << st.floatDecl("offset") << " = " << logPivotName << " - " << logPivotName
+                                               << " / contrast - exposure;";
+    }
+
+    st.newLine() << shaderCreator->getPixelName() << ".rgb = "
                  << shaderCreator->getPixelName() << ".rgb / contrast + offset;";
 }
 
@@ -284,6 +391,7 @@ void GetExposureContrastGPUShaderProgram(GpuShaderCreatorRcPtr & shaderCreator,
     std::string exposureName;
     std::string contrastName;
     std::string gammaName;
+    std::string pivotName;
 
     GpuShaderText st(shaderCreator->getLanguage());
     st.indent();
@@ -299,27 +407,32 @@ void GetExposureContrastGPUShaderProgram(GpuShaderCreatorRcPtr & shaderCreator,
     AddProperties(shaderCreator, st, ec,
                   exposureName,
                   contrastName,
-                  gammaName);
+                  gammaName,
+                  pivotName);
 
     switch (ec->getStyle())
     {
     case ExposureContrastOpData::STYLE_LINEAR:
-        AddECLinearShader(shaderCreator, st, ec, exposureName, contrastName, gammaName);
+        AddECLinearShader(shaderCreator, st, ec, exposureName, contrastName, gammaName, pivotName);
         break;
     case ExposureContrastOpData::STYLE_LINEAR_REV:
-        AddECLinearRevShader(shaderCreator, st, ec, exposureName, contrastName, gammaName);
+        AddECLinearRevShader(shaderCreator, st, ec, exposureName, contrastName,
+                              gammaName, pivotName);
         break;
     case ExposureContrastOpData::STYLE_VIDEO:
-        AddECVideoShader(shaderCreator, st, ec, exposureName, contrastName, gammaName);
+        AddECVideoShader(shaderCreator, st, ec, exposureName, contrastName, gammaName, pivotName);
         break;
     case ExposureContrastOpData::STYLE_VIDEO_REV:
-        AddECVideoRevShader(shaderCreator, st, ec, exposureName, contrastName, gammaName);
+        AddECVideoRevShader(shaderCreator, st, ec, exposureName, contrastName,
+                             gammaName, pivotName);
         break;
     case ExposureContrastOpData::STYLE_LOGARITHMIC:
-        AddECLogarithmicShader(shaderCreator, st, ec, exposureName, contrastName, gammaName);
+        AddECLogarithmicShader(shaderCreator, st, ec, exposureName, contrastName,
+                                gammaName, pivotName);
         break;
     case ExposureContrastOpData::STYLE_LOGARITHMIC_REV:
-        AddECLogarithmicRevShader(shaderCreator, st, ec, exposureName, contrastName, gammaName);
+        AddECLogarithmicRevShader(shaderCreator, st, ec, exposureName, contrastName,
+                                   gammaName, pivotName);
         break;
     }
 

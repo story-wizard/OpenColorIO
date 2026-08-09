@@ -1072,6 +1072,17 @@ public:
      * in linear. In other words, a pivot of 0.18 is always mid-gray.
      */
     virtual void setPivot(double pivot) = 0;
+    /**
+     * Pivot can be made dynamic so the value can be changed through the CPU or GPU processor,
+     * but if there are several ExposureContrastTransform only one can have a dynamic pivot.
+     *
+     * Note that unlike the other three, a dynamic pivot is not serialized: the CTF
+     * DynamicParameter vocabulary has no PIVOT token.  Writing a transform with a dynamic pivot
+     * gives the same output as a static one, and reading it back gives a static pivot.
+     */
+    virtual bool isPivotDynamic() const = 0;
+    virtual void makePivotDynamic() = 0;
+    virtual void makePivotNonDynamic() = 0;
 
     virtual double getLogExposureStep() const = 0;
     /**

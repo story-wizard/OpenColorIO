@@ -159,6 +159,7 @@ ExposureContrastOpData::ExposureContrastOpData()
     , m_exposure(std::make_shared<DynamicPropertyDoubleImpl>(DYNAMIC_PROPERTY_EXPOSURE, 0., false))
     , m_contrast(std::make_shared<DynamicPropertyDoubleImpl>(DYNAMIC_PROPERTY_CONTRAST, 1., false))
     , m_gamma(std::make_shared<DynamicPropertyDoubleImpl>(DYNAMIC_PROPERTY_GAMMA, 1., false))
+    , m_pivot(std::make_shared<DynamicPropertyDoubleImpl>(DYNAMIC_PROPERTY_PIVOT, 0.18, false))
 {
 }
 
@@ -168,6 +169,7 @@ ExposureContrastOpData::ExposureContrastOpData(Style style)
     , m_exposure(std::make_shared<DynamicPropertyDoubleImpl>(DYNAMIC_PROPERTY_EXPOSURE, 0., false))
     , m_contrast(std::make_shared<DynamicPropertyDoubleImpl>(DYNAMIC_PROPERTY_CONTRAST, 1., false))
     , m_gamma(std::make_shared<DynamicPropertyDoubleImpl>(DYNAMIC_PROPERTY_GAMMA, 1., false))
+    , m_pivot(std::make_shared<DynamicPropertyDoubleImpl>(DYNAMIC_PROPERTY_PIVOT, 0.18, false))
 {
 }
 
@@ -204,7 +206,8 @@ bool ExposureContrastOpData::isDynamic() const
 {
     return m_exposure->isDynamic() ||
            m_contrast->isDynamic() ||
-           m_gamma->isDynamic();
+           m_gamma->isDynamic() ||
+           m_pivot->isDynamic();
 }
 
 bool ExposureContrastOpData::isInverse(ConstExposureContrastOpDataRcPtr & r) const
@@ -271,7 +274,16 @@ std::string ExposureContrastOpData::getCacheID() const
     {
         cacheIDStream << "G: " << m_gamma->getValue() << " ";
     }
-    cacheIDStream << "P: " << m_pivot << " ";
+    // A dynamic pivot drops its value like the three above, but still needs a marker: unlike
+    // them it is not implied by anything else here, and it selects a different shader.
+    if (!m_pivot->isDynamic())
+    {
+        cacheIDStream << "P: " << m_pivot->getValue() << " ";
+    }
+    else
+    {
+        cacheIDStream << "Pdyn ";
+    }
     cacheIDStream << "LES: " << m_logExposureStep << " ";
     cacheIDStream << "LMG: " << m_logMidGray;
 
@@ -287,12 +299,12 @@ bool ExposureContrastOpData::equals(const OpData & other) const
     // NB: Please see note in DynamicProperty.h describing how dynamic
     //     properties are compared for equality.
     return getStyle() == ec->getStyle()
-        && getPivot() == ec->getPivot()
         && getLogExposureStep() == ec->getLogExposureStep()
         && getLogMidGray() == ec->getLogMidGray()
         && m_exposure->equals(*(ec->m_exposure))
         && m_contrast->equals(*(ec->m_contrast))
-        && m_gamma->equals(*(ec->m_gamma));
+        && m_gamma->equals(*(ec->m_gamma))
+        && m_pivot->equals(*(ec->m_pivot));
 }
 
 bool ExposureContrastOpData::hasDynamicProperty(DynamicPropertyType type) const
@@ -308,6 +320,9 @@ bool ExposureContrastOpData::hasDynamicProperty(DynamicPropertyType type) const
         break;
     case DYNAMIC_PROPERTY_GAMMA:
         res = m_gamma->isDynamic();
+        break;
+    case DYNAMIC_PROPERTY_PIVOT:
+        res = m_pivot->isDynamic();
         break;
     case DYNAMIC_PROPERTY_GRADING_PRIMARY:
     case DYNAMIC_PROPERTY_GRADING_RGBCURVE:
@@ -341,6 +356,12 @@ ExposureContrastOpData::getDynamicProperty(DynamicPropertyType type) const
         if (m_gamma->isDynamic())
         {
             return m_gamma;
+        }
+        break;
+    case DYNAMIC_PROPERTY_PIVOT:
+        if (m_pivot->isDynamic())
+        {
+            return m_pivot;
         }
         break;
     case DYNAMIC_PROPERTY_GRADING_PRIMARY:
@@ -383,6 +404,13 @@ void ExposureContrastOpData::replaceDynamicProperty(DynamicPropertyType type,
                 return;
             }
             break;
+        case DYNAMIC_PROPERTY_PIVOT:
+            if (m_pivot->isDynamic())
+            {
+                m_pivot = propDouble;
+                return;
+            }
+            break;
         case DYNAMIC_PROPERTY_GRADING_PRIMARY:
         case DYNAMIC_PROPERTY_GRADING_RGBCURVE:
         case DYNAMIC_PROPERTY_GRADING_HUECURVE:
@@ -400,6 +428,7 @@ void ExposureContrastOpData::removeDynamicProperties()
     m_exposure->makeNonDynamic();
     m_contrast->makeNonDynamic();
     m_gamma->makeNonDynamic();
+    m_pivot->makeNonDynamic();
 }
 
 ExposureContrastOpData & ExposureContrastOpData::operator=(const ExposureContrastOpData & rhs)
@@ -413,6 +442,7 @@ ExposureContrastOpData & ExposureContrastOpData::operator=(const ExposureContras
     m_exposure->setValue(rhs.m_exposure->getValue());
     m_contrast->setValue(rhs.m_contrast->getValue());
     m_gamma->setValue(rhs.m_gamma->getValue());
+    m_pivot->setValue(rhs.m_pivot->getValue());
     if (rhs.m_exposure->isDynamic())
     {
         m_exposure->makeDynamic();
@@ -425,7 +455,10 @@ ExposureContrastOpData & ExposureContrastOpData::operator=(const ExposureContras
     {
         m_gamma->makeDynamic();
     }
-    m_pivot = rhs.m_pivot;
+    if (rhs.m_pivot->isDynamic())
+    {
+        m_pivot->makeDynamic();
+    }
     m_logExposureStep = rhs.m_logExposureStep;
     m_logMidGray = rhs.m_logMidGray;
 

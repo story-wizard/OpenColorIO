@@ -37,6 +37,21 @@ Based on upstream `RB-2.5` at `c52966a6` (= v2.5.2).
 
 ### No pixel change
 
+- **Allow the ExposureContrast pivot to be a dynamic property.** Exposure,
+  contrast and gamma could each be driven from a viewport control without
+  rebuilding the processor; the pivot could not, and was folded into the
+  generated shader as a literal, so changing it forced a shader recompile. A new
+  `DYNAMIC_PROPERTY_PIVOT` and `makePivotDynamic()` let it reach the shader as a
+  uniform instead. The pivot stays non-dynamic by default, so a static pivot
+  produces byte-identical shader text and byte-identical CPU results; only a
+  transform that opts in generates different source. Note that a dynamic pivot
+  is deliberately not serialized — the CTF `DynamicParameter` vocabulary has no
+  PIVOT token — and that this inserts virtuals into the exported
+  `ExposureContrastTransform` interface, so the library is not binary-compatible
+  with a stock 2.5 build (harmless while wizard-core builds from source against
+  a pinned SHA).
+  Upstream status: not yet submitted. (fork PR #3)
+
 - **Hold constant references to array uniforms in the Metal class wrapper.**
   The generated MSL struct took owning copies of every array uniform and
   rebuilt them once per shader invocation, which for a compute kernel

@@ -32,12 +32,25 @@ public:
 protected:
     virtual void updateData(ConstExposureContrastOpDataRcPtr & ec) = 0;
 
+    // Convert the pivot into the form apply() uses, which differs per style.
+    virtual float derivePivot(double pivot) const = 0;
+
+    // Precomputed by updateData() when static; converted here when dynamic, since the value
+    // may change after the op is built.  One scalar op per apply() call, not per pixel.
+    float pivot() const
+    {
+        return m_pivot->isDynamic() ? derivePivot(m_pivot->getValue()) : m_derivedPivot;
+    }
+
     DynamicPropertyDoubleImplRcPtr m_exposure;
     DynamicPropertyDoubleImplRcPtr m_contrast;
     DynamicPropertyDoubleImplRcPtr m_gamma;
+    DynamicPropertyDoubleImplRcPtr m_pivot;
 
-    float m_pivot = 0.0f;
-    float m_logExposureStep = 0.088f;
+    float m_derivedPivot = 0.0f;
+    // Double precision for derivePivot(); apply() casts at the use site.
+    double m_logExposureStep = ExposureContrastOpData::LOGEXPOSURESTEP_DEFAULT;
+    double m_logMidGray = ExposureContrastOpData::LOGMIDGRAY_DEFAULT;
 };
 
 ECRendererBase::ECRendererBase(ConstExposureContrastOpDataRcPtr & ec)
@@ -47,6 +60,11 @@ ECRendererBase::ECRendererBase(ConstExposureContrastOpDataRcPtr & ec)
     m_exposure = ec->getExposureProperty();
     m_contrast = ec->getContrastProperty();
     m_gamma = ec->getGammaProperty();
+    m_pivot = ec->getPivotProperty();
+    if (m_pivot->isDynamic())
+    {
+        m_pivot = m_pivot->createEditableCopy();
+    }
     if (m_exposure->isDynamic())
     {
         m_exposure = m_exposure->createEditableCopy();
@@ -67,7 +85,8 @@ ECRendererBase::~ECRendererBase()
 
 bool ECRendererBase::isDynamic() const
 {
-    return m_exposure->isDynamic() || m_contrast->isDynamic() || m_gamma->isDynamic();
+    return m_exposure->isDynamic() || m_contrast->isDynamic() || m_gamma->isDynamic()
+        || m_pivot->isDynamic();
 }
 
 bool ECRendererBase::hasDynamicProperty(DynamicPropertyType type) const
@@ -83,6 +102,9 @@ bool ECRendererBase::hasDynamicProperty(DynamicPropertyType type) const
             break;
         case DYNAMIC_PROPERTY_GAMMA:
             res = m_gamma->isDynamic();
+            break;
+        case DYNAMIC_PROPERTY_PIVOT:
+            res = m_pivot->isDynamic();
             break;
         case DYNAMIC_PROPERTY_GRADING_PRIMARY:
         case DYNAMIC_PROPERTY_GRADING_RGBCURVE:
@@ -117,6 +139,12 @@ DynamicPropertyRcPtr ECRendererBase::getDynamicProperty(DynamicPropertyType type
                 return m_gamma;
             }
             break;
+        case DYNAMIC_PROPERTY_PIVOT:
+            if (m_pivot->isDynamic())
+            {
+                return m_pivot;
+            }
+            break;
         case DYNAMIC_PROPERTY_GRADING_PRIMARY:
         case DYNAMIC_PROPERTY_GRADING_RGBCURVE:
         case DYNAMIC_PROPERTY_GRADING_HUECURVE:
@@ -139,6 +167,7 @@ public:
 
 protected:
     void updateData(ConstExposureContrastOpDataRcPtr & ec) override;
+    float derivePivot(double pivot) const override;
 };
 
 ECLinearRenderer::ECLinearRenderer(ConstExposureContrastOpDataRcPtr & ec)
@@ -147,9 +176,14 @@ ECLinearRenderer::ECLinearRenderer(ConstExposureContrastOpDataRcPtr & ec)
     updateData(ec);
 }
 
+float ECLinearRenderer::derivePivot(double pivot) const
+{
+    return (float)std::max(EC::MIN_PIVOT, pivot);
+}
+
 void ECLinearRenderer::updateData(ConstExposureContrastOpDataRcPtr & ec)
 {
-    m_pivot = (float)std::max(EC::MIN_PIVOT, ec->getPivot());
+    m_derivedPivot = derivePivot(ec->getPivot());
 }
 
 void ECLinearRenderer::apply(const void * inImg, void * outImg, long numPixels) const
@@ -160,6 +194,7 @@ void ECLinearRenderer::apply(const void * inImg, void * outImg, long numPixels) 
                                               m_contrast->getValue() *
                                               m_gamma->getValue());
     const float exposureVal = powf(2.f, (float)m_exposure->getValue());
+    const float pivotVal = pivot();
 
     const float * in = (float *)inImg;
     float * out = (float *)outImg;
@@ -184,8 +219,8 @@ void ECLinearRenderer::apply(const void * inImg, void * outImg, long numPixels) 
     {
 #if OCIO_USE_SSE2
         __m128 contrast = _mm_set1_ps(contrastVal);
-        __m128 exposure_over_pivot = _mm_set1_ps(exposureVal / m_pivot);
-        __m128 piv = _mm_set1_ps(m_pivot);
+        __m128 exposure_over_pivot = _mm_set1_ps(exposureVal / pivotVal);
+        __m128 piv = _mm_set1_ps(pivotVal);
         for (long idx = 0; idx<numPixels; ++idx)
         {
             const float outAlpha = in[3];
@@ -211,7 +246,7 @@ void ECLinearRenderer::apply(const void * inImg, void * outImg, long numPixels) 
             out += 4;
         }
 #else
-        const float exposureOverPivotVal = exposureVal / m_pivot;
+        const float exposureOverPivotVal = exposureVal / pivotVal;
         for (long idx = 0; idx<numPixels; ++idx)
         {
 
@@ -220,11 +255,11 @@ void ECLinearRenderer::apply(const void * inImg, void * outImg, long numPixels) 
             //
             // Note: With std::max NAN becomes 0.
             out[0] = powf(std::max(0.0f, in[0] * exposureOverPivotVal),
-                           contrastVal) * m_pivot;
+                           contrastVal) * pivotVal;
             out[1] = powf(std::max(0.0f, in[1] * exposureOverPivotVal),
-                           contrastVal) * m_pivot;
+                           contrastVal) * pivotVal;
             out[2] = powf(std::max(0.0f, in[2] * exposureOverPivotVal),
-                           contrastVal) * m_pivot;
+                           contrastVal) * pivotVal;
             out[3] = in[3];
 
             in += 4;
@@ -243,6 +278,7 @@ public:
 
 protected:
     void updateData(ConstExposureContrastOpDataRcPtr & ec) override;
+    float derivePivot(double pivot) const override;
 };
 
 ECLinearRevRenderer::ECLinearRevRenderer(ConstExposureContrastOpDataRcPtr & ec)
@@ -251,9 +287,14 @@ ECLinearRevRenderer::ECLinearRevRenderer(ConstExposureContrastOpDataRcPtr & ec)
     updateData(ec);
 }
 
+float ECLinearRevRenderer::derivePivot(double pivot) const
+{
+    return (float)std::max(EC::MIN_PIVOT, pivot);
+}
+
 void ECLinearRevRenderer::updateData(ConstExposureContrastOpDataRcPtr & ec)
 {
-    m_pivot = (float)std::max(EC::MIN_PIVOT, ec->getPivot());
+    m_derivedPivot = derivePivot(ec->getPivot());
 }
 
 void ECLinearRevRenderer::apply(const void * inImg, void * outImg, long numPixels) const
@@ -263,6 +304,7 @@ void ECLinearRevRenderer::apply(const void * inImg, void * outImg, long numPixel
                                               (m_contrast->getValue() * m_gamma->getValue()));
     const float invContrastVal = 1.f / contrastVal;
     const float invExposureVal = 1.f / powf(2.f, (float)m_exposure->getValue());
+    const float pivotVal = pivot();
 
     const float * in = (float *)inImg;
     float * out = (float *)outImg;
@@ -285,8 +327,8 @@ void ECLinearRevRenderer::apply(const void * inImg, void * outImg, long numPixel
 #if OCIO_USE_SSE2
         __m128 inv_contrast = _mm_set1_ps(invContrastVal);
 
-        const float pivotOverExposureVal = m_pivot * invExposureVal;
-        const float invPivotVal = 1.f / m_pivot;
+        const float pivotOverExposureVal = pivotVal * invExposureVal;
+        const float invPivotVal = 1.f / pivotVal;
 
         __m128 pivot_over_exposure = _mm_set1_ps(pivotOverExposureVal);
         __m128 inv_pivot = _mm_set1_ps(invPivotVal);
@@ -317,8 +359,8 @@ void ECLinearRevRenderer::apply(const void * inImg, void * outImg, long numPixel
             out += 4;
         }
 #else
-        const float pivotOverExposureVal = m_pivot * invExposureVal;
-        const float invPivotVal = 1.f / m_pivot;
+        const float pivotOverExposureVal = pivotVal * invExposureVal;
+        const float invPivotVal = 1.f / pivotVal;
 
         for (long idx = 0; idx<numPixels; ++idx)
         {
@@ -349,6 +391,7 @@ public:
 
 protected:
     void updateData(ConstExposureContrastOpDataRcPtr & ec) override;
+    float derivePivot(double pivot) const override;
 };
 
 ECVideoRenderer::ECVideoRenderer(ConstExposureContrastOpDataRcPtr & ec)
@@ -357,10 +400,14 @@ ECVideoRenderer::ECVideoRenderer(ConstExposureContrastOpDataRcPtr & ec)
     updateData(ec);
 }
 
+float ECVideoRenderer::derivePivot(double pivot) const
+{
+    return powf((float)std::max(EC::MIN_PIVOT, pivot), (float)EC::VIDEO_OETF_POWER);
+}
+
 void ECVideoRenderer::updateData(ConstExposureContrastOpDataRcPtr & ec)
 {
-    m_pivot = powf((float)std::max(EC::MIN_PIVOT, ec->getPivot()),
-                   (float)EC::VIDEO_OETF_POWER);
+    m_derivedPivot = derivePivot(ec->getPivot());
 }
 
 void ECVideoRenderer::apply(const void * inImg, void * outImg, long numPixels) const
@@ -370,6 +417,7 @@ void ECVideoRenderer::apply(const void * inImg, void * outImg, long numPixels) c
                                               (m_contrast->getValue() * m_gamma->getValue()));
     const float exposureVal = powf(powf(2.f, (float)m_exposure->getValue()),
                                    (float)EC::VIDEO_OETF_POWER);
+    const float pivotVal = pivot();
 
     const float * in = (float *)inImg;
     float * out = (float *)outImg;
@@ -394,8 +442,8 @@ void ECVideoRenderer::apply(const void * inImg, void * outImg, long numPixels) c
     {
 #if OCIO_USE_SSE2
         __m128 contrast = _mm_set1_ps(contrastVal);
-        __m128 exposure_over_pivot = _mm_set1_ps(exposureVal / m_pivot);
-        __m128 piv = _mm_set1_ps(m_pivot);
+        __m128 exposure_over_pivot = _mm_set1_ps(exposureVal / pivotVal);
+        __m128 piv = _mm_set1_ps(pivotVal);
         for (long idx = 0; idx<numPixels; ++idx)
         {
             const float outAlpha = in[3];
@@ -421,18 +469,18 @@ void ECVideoRenderer::apply(const void * inImg, void * outImg, long numPixels) c
             out += 4;
         }
 #else
-        const float exposureOverPivotVal = exposureVal / m_pivot;
+        const float exposureOverPivotVal = exposureVal / pivotVal;
         for (long idx = 0; idx<numPixels; ++idx)
         {
             //
             // out = powf( i * exposure / pivot, contrast ) * pivot
             //
             out[0] = powf(std::max(0.0f, in[0] * exposureOverPivotVal),
-                           contrastVal) * m_pivot;
+                           contrastVal) * pivotVal;
             out[1] = powf(std::max(0.0f, in[1] * exposureOverPivotVal),
-                           contrastVal) * m_pivot;
+                           contrastVal) * pivotVal;
             out[2] = powf(std::max(0.0f, in[2] * exposureOverPivotVal),
-                           contrastVal) * m_pivot;
+                           contrastVal) * pivotVal;
             out[3] = in[3];
 
             in += 4;
@@ -451,6 +499,7 @@ public:
 
 protected:
     void updateData(ConstExposureContrastOpDataRcPtr & ec) override;
+    float derivePivot(double pivot) const override;
 };
 
 ECVideoRevRenderer::ECVideoRevRenderer(ConstExposureContrastOpDataRcPtr & ec)
@@ -459,10 +508,14 @@ ECVideoRevRenderer::ECVideoRevRenderer(ConstExposureContrastOpDataRcPtr & ec)
     updateData(ec);
 }
 
+float ECVideoRevRenderer::derivePivot(double pivot) const
+{
+    return powf((float)std::max(EC::MIN_PIVOT, pivot), (float)EC::VIDEO_OETF_POWER);
+}
+
 void ECVideoRevRenderer::updateData(ConstExposureContrastOpDataRcPtr & ec)
 {
-    m_pivot = powf((float)std::max(EC::MIN_PIVOT, ec->getPivot()),
-                   (float)EC::VIDEO_OETF_POWER);
+    m_derivedPivot = derivePivot(ec->getPivot());
 }
 
 void ECVideoRevRenderer::apply(const void * inImg, void * outImg, long numPixels) const
@@ -473,8 +526,9 @@ void ECVideoRevRenderer::apply(const void * inImg, void * outImg, long numPixels
     const float invContrastVal = 1.f / contrastVal;
     const float invExposureVal = 1.f / powf(powf(2.f, (float)m_exposure->getValue()),
                                             (float)EC::VIDEO_OETF_POWER);
-    const float pivotOverExposureVal = m_pivot * invExposureVal;
-    const float invPivotVal = 1.f / m_pivot;
+    const float pivotVal = pivot();
+    const float pivotOverExposureVal = pivotVal * invExposureVal;
+    const float invPivotVal = 1.f / pivotVal;
 
     const float * in = (float *)inImg;
     float * out = (float *)outImg;
@@ -556,6 +610,7 @@ public:
 
 protected:
     void updateData(ConstExposureContrastOpDataRcPtr & ec) override;
+    float derivePivot(double pivot) const override;
 };
 
 ECLogarithmicRenderer::ECLogarithmicRenderer(ConstExposureContrastOpDataRcPtr & ec)
@@ -564,24 +619,29 @@ ECLogarithmicRenderer::ECLogarithmicRenderer(ConstExposureContrastOpDataRcPtr & 
     updateData(ec);
 }
 
+float ECLogarithmicRenderer::derivePivot(double pivot) const
+{
+    const float p = (float)std::max(EC::MIN_PIVOT, pivot);
+    return (float)std::max(0., log2(p / 0.18) * m_logExposureStep + m_logMidGray);
+}
+
 void ECLogarithmicRenderer::updateData(ConstExposureContrastOpDataRcPtr & ec)
 {
-    const float pivot = (float)std::max(EC::MIN_PIVOT, ec->getPivot());
-    m_pivot = (float)std::max(0., log2(pivot / 0.18) *
-                                  ec->getLogExposureStep() +
-                                  ec->getLogMidGray());
+    m_logExposureStep = ec->getLogExposureStep();
+    m_logMidGray = ec->getLogMidGray();
 
-    m_logExposureStep = (float)ec->getLogExposureStep();
+    m_derivedPivot = derivePivot(ec->getPivot());
 }
 
 void ECLogarithmicRenderer::apply(const void * inImg, void * outImg, long numPixels) const
 {
     const float exposureVal = (float)m_exposure->getValue() *
-                              m_logExposureStep;
+                              (float)m_logExposureStep;
     const float contrastVal
         = (float)std::max(EC::MIN_CONTRAST,
                           (m_contrast->getValue() * m_gamma->getValue()));
-    const float offsetVal = (exposureVal - m_pivot) * contrastVal + m_pivot;
+    const float pivotVal = pivot();
+    const float offsetVal = (exposureVal - pivotVal) * contrastVal + pivotVal;
 
     const float * in = (float *)inImg;
     float * out = (float *)outImg;
@@ -640,6 +700,7 @@ public:
 
 protected:
     void updateData(ConstExposureContrastOpDataRcPtr & ec) override;
+    float derivePivot(double pivot) const override;
 };
 
 ECLogarithmicRevRenderer::ECLogarithmicRevRenderer(ConstExposureContrastOpDataRcPtr & ec)
@@ -648,24 +709,29 @@ ECLogarithmicRevRenderer::ECLogarithmicRevRenderer(ConstExposureContrastOpDataRc
     updateData(ec);
 }
 
+float ECLogarithmicRevRenderer::derivePivot(double pivot) const
+{
+    const float p = (float)std::max(EC::MIN_PIVOT, pivot);
+    return (float)std::max(0., log2(p / 0.18) * m_logExposureStep + m_logMidGray);
+}
+
 void ECLogarithmicRevRenderer::updateData(ConstExposureContrastOpDataRcPtr & ec)
 {
-    const float pivot = (float)std::max(EC::MIN_PIVOT, ec->getPivot());
-    m_pivot = (float)std::max(0., log2(pivot / 0.18) *
-                                  ec->getLogExposureStep() +
-                                  ec->getLogMidGray());
+    m_logExposureStep = ec->getLogExposureStep();
+    m_logMidGray = ec->getLogMidGray();
 
-    m_logExposureStep = (float)ec->getLogExposureStep();
+    m_derivedPivot = derivePivot(ec->getPivot());
 }
 
 void ECLogarithmicRevRenderer::apply(const void * inImg, void * outImg, long numPixels) const
 {
     const float exposureVal = (float)m_exposure->getValue() *
-                              m_logExposureStep;
+                              (float)m_logExposureStep;
     const float inv_contrastVal
         = (float)std::max(EC::MIN_CONTRAST,
                           1. / (m_contrast->getValue() * m_gamma->getValue()));
-    const float negOffsetVal = m_pivot - m_pivot * inv_contrastVal -
+    const float pivotVal = pivot();
+    const float negOffsetVal = pivotVal - pivotVal * inv_contrastVal -
                                exposureVal;
 
     const float * in = (float *)inImg;
