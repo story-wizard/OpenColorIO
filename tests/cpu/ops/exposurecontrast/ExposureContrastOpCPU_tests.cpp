@@ -447,3 +447,75 @@ OCIO_ADD_TEST(ExposureContrastRenderer, log_exposure_step_inverse)
     TestECInverse(OCIO::ExposureContrastOpData::STYLE_LOGARITHMIC_REV, 0.074);
 }
 
+namespace
+{
+void TestDynamicPivotForStyle(OCIO::ExposureContrastOpData::Style style, double contrast)
+{
+    const std::vector<float> rgbaImage { -0.25f, 0.0f,  0.0004f, 0.75f,
+                                          0.02f, 0.18f, 0.5f,    0.75f,
+                                          0.9f,  1.0f,  4.0f,    0.75f };
+
+    // Spans below EC::MIN_PIVOT, mid-gray, and the display-referred pivot of 1.
+    static constexpr double pivots[] = { 0.0, 0.0005, 0.001, 0.05, 0.18, 0.5, 1.0, 4.0 };
+
+    OCIO::ExposureContrastOpDataRcPtr ecDyn =
+        std::make_shared<OCIO::ExposureContrastOpData>(style);
+    ecDyn->setExposure(0.75);
+    ecDyn->setContrast(contrast);
+    ecDyn->setGamma(1.2);
+    ecDyn->setLogExposureStep(0.074);
+    ecDyn->setLogMidGray(0.39);
+    ecDyn->getPivotProperty()->makeDynamic();
+
+    OCIO::ConstExposureContrastOpDataRcPtr constEcDyn = ecDyn;
+    OCIO::OpCPURcPtr rendererDyn = OCIO::GetExposureContrastCPURenderer(constEcDyn);
+
+    OCIO::DynamicPropertyRcPtr dp =
+        rendererDyn->getDynamicProperty(OCIO::DYNAMIC_PROPERTY_PIVOT);
+    OCIO::DynamicPropertyDoubleRcPtr dpd = OCIO::DynamicPropertyValue::AsDouble(dp);
+
+    for (double pivot : pivots)
+    {
+        dpd->setValue(pivot);
+        std::vector<float> rgba = rgbaImage;
+        rendererDyn->apply(rgba.data(), rgba.data(), 3);
+
+        // Reference: a renderer rebuilt at this pivot, i.e. what a recompile would produce.
+        OCIO::ExposureContrastOpDataRcPtr ec =
+            std::make_shared<OCIO::ExposureContrastOpData>(style);
+        ec->setExposure(0.75);
+        ec->setContrast(contrast);
+        ec->setGamma(1.2);
+        ec->setPivot(pivot);
+        ec->setLogExposureStep(0.074);
+        ec->setLogMidGray(0.39);
+
+        OCIO::ConstExposureContrastOpDataRcPtr constEc = ec;
+        OCIO::OpCPURcPtr renderer = OCIO::GetExposureContrastCPURenderer(constEc);
+
+        std::vector<float> rgbaRef = rgbaImage;
+        renderer->apply(rgbaRef.data(), rgbaRef.data(), 3);
+
+        for (int i = 0; i < 12; ++i)
+        {
+            OCIO_CHECK_EQUAL(rgba[i], rgbaRef[i]);
+        }
+    }
+}
+}
+
+OCIO_ADD_TEST(ExposureContrastRenderer, dynamic_pivot)
+{
+    // A dynamically driven pivot must match a renderer rebuilt at the same pivot.  A contrast
+    // of 1 takes the fast path where the pivot cancels out, so both are covered.
+    TestDynamicPivotForStyle(OCIO::ExposureContrastOpData::STYLE_VIDEO, 1.8);
+    TestDynamicPivotForStyle(OCIO::ExposureContrastOpData::STYLE_VIDEO_REV, 1.8);
+    TestDynamicPivotForStyle(OCIO::ExposureContrastOpData::STYLE_LINEAR, 1.8);
+    TestDynamicPivotForStyle(OCIO::ExposureContrastOpData::STYLE_LINEAR_REV, 1.8);
+    TestDynamicPivotForStyle(OCIO::ExposureContrastOpData::STYLE_LOGARITHMIC, 1.8);
+    TestDynamicPivotForStyle(OCIO::ExposureContrastOpData::STYLE_LOGARITHMIC_REV, 1.8);
+
+    TestDynamicPivotForStyle(OCIO::ExposureContrastOpData::STYLE_VIDEO, 1.0);
+    TestDynamicPivotForStyle(OCIO::ExposureContrastOpData::STYLE_LINEAR, 1.0);
+    TestDynamicPivotForStyle(OCIO::ExposureContrastOpData::STYLE_LOGARITHMIC, 1.0);
+}

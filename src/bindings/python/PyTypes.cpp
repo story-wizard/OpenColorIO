@@ -693,8 +693,10 @@ void bindPyTypes(py::module & m)
                DOC(PyOpenColorIO, DynamicPropertyType, DYNAMIC_PROPERTY_GRADING_RGBCURVE))
         .value("DYNAMIC_PROPERTY_GRADING_HUECURVE", DYNAMIC_PROPERTY_GRADING_HUECURVE, 
                DOC(PyOpenColorIO, DynamicPropertyType, DYNAMIC_PROPERTY_GRADING_HUECURVE))
-        .value("DYNAMIC_PROPERTY_GRADING_TONE", DYNAMIC_PROPERTY_GRADING_TONE, 
+        .value("DYNAMIC_PROPERTY_GRADING_TONE", DYNAMIC_PROPERTY_GRADING_TONE,
                DOC(PyOpenColorIO, DynamicPropertyType, DYNAMIC_PROPERTY_GRADING_TONE))
+        .value("DYNAMIC_PROPERTY_PIVOT", DYNAMIC_PROPERTY_PIVOT,
+               DOC(PyOpenColorIO, DynamicPropertyType, DYNAMIC_PROPERTY_PIVOT))
         .export_values();
 
     py::enum_<RGBCurveType>(

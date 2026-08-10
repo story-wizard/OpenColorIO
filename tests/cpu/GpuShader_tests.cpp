@@ -1350,6 +1350,171 @@ float4 OCIOMain(
                       == std::string::npos);
 }
 
+OCIO_ADD_TEST(GpuShader, ExposureContrastDynamicPivot)
+{
+    // A dynamic pivot must reach the shader as a uniform, not as a literal.
+
+    OCIO::ConfigRcPtr config = OCIO::Config::Create();
+
+    auto shaderText = [&config](const OCIO::ConstTransformRcPtr & t, OCIO::GpuLanguage lang)
+    {
+        auto shaderDesc = OCIO::GpuShaderDesc::CreateShaderDesc();
+        shaderDesc->setLanguage(lang);
+        config->getProcessor(t)->getOptimizedGPUProcessor(OCIO::OPTIMIZATION_NONE)
+              ->extractGpuShaderInfo(shaderDesc);
+        return std::string(shaderDesc->getShaderText());
+    };
+
+    auto ec = OCIO::ExposureContrastTransform::Create();
+    ec->setStyle(OCIO::EXPOSURE_CONTRAST_LINEAR);
+    ec->makeExposureDynamic();
+    ec->makeContrastDynamic();
+    ec->makeGammaDynamic();
+    ec->makePivotDynamic();
+
+    const std::string text = shaderText(ec, OCIO::GPU_LANGUAGE_MSL_2_0);
+
+    static constexpr char expected[] = { R"(
+// Declaration of class wrapper
+
+struct ocioOCIOMain
+{
+ocioOCIOMain(
+  float ocio_exposure_contrast_exposureVal
+  , float ocio_exposure_contrast_contrastVal
+  , float ocio_exposure_contrast_gammaVal
+  , float ocio_exposure_contrast_pivotVal
+)
+{
+  this->ocio_exposure_contrast_exposureVal = ocio_exposure_contrast_exposureVal;
+  this->ocio_exposure_contrast_contrastVal = ocio_exposure_contrast_contrastVal;
+  this->ocio_exposure_contrast_gammaVal = ocio_exposure_contrast_gammaVal;
+  this->ocio_exposure_contrast_pivotVal = ocio_exposure_contrast_pivotVal;
+}
+
+
+// Declaration of all variables
+
+float ocio_exposure_contrast_exposureVal;
+float ocio_exposure_contrast_contrastVal;
+float ocio_exposure_contrast_gammaVal;
+float ocio_exposure_contrast_pivotVal;
+
+
+// Declaration of the OCIO shader function
+
+float4 OCIOMain(float4 inPixel)
+{
+  float4 outColor = inPixel;
+  
+  // Add ExposureContrast 'linear' processing
+  
+  {
+    float exposure = pow( 2., ocio_exposure_contrast_exposureVal );
+    float contrast = max( 0.001, ( ocio_exposure_contrast_contrastVal * ocio_exposure_contrast_gammaVal ) );
+    float pivot = max( 0.001, ocio_exposure_contrast_pivotVal );
+    outColor.rgb = outColor.rgb * exposure;
+    if (contrast != 1.0)
+    {
+      outColor.rgb = pow( max( float3(0., 0., 0.), outColor.rgb / float3(pivot, pivot, pivot) ), float3(contrast, contrast, contrast) ) * float3(pivot, pivot, pivot);
+    }
+  }
+
+  return outColor;
+}
+
+// Close class wrapper
+
+
+};
+float4 OCIOMain(
+  float ocio_exposure_contrast_exposureVal
+  , float ocio_exposure_contrast_contrastVal
+  , float ocio_exposure_contrast_gammaVal
+  , float ocio_exposure_contrast_pivotVal
+  , float4 inPixel)
+{
+  return ocioOCIOMain(
+    ocio_exposure_contrast_exposureVal
+    , ocio_exposure_contrast_contrastVal
+    , ocio_exposure_contrast_gammaVal
+    , ocio_exposure_contrast_pivotVal
+  ).OCIOMain(inPixel);
+}
+)" };
+
+    OCIO_CHECK_EQUAL(expected, text);
+
+    // Invariant source is only half of it: the uniform also has to track the property.
+    {
+        auto shaderDesc = OCIO::GpuShaderDesc::CreateShaderDesc();
+        shaderDesc->setLanguage(OCIO::GPU_LANGUAGE_MSL_2_0);
+        config->getProcessor(ec)->getOptimizedGPUProcessor(OCIO::OPTIMIZATION_NONE)
+              ->extractGpuShaderInfo(shaderDesc);
+
+        OCIO_CHECK_ASSERT(shaderDesc->hasDynamicProperty(OCIO::DYNAMIC_PROPERTY_PIVOT));
+
+        OCIO::DynamicPropertyRcPtr dp;
+        OCIO_CHECK_NO_THROW(dp = shaderDesc->getDynamicProperty(OCIO::DYNAMIC_PROPERTY_PIVOT));
+        OCIO::DynamicPropertyValue::AsDouble(dp)->setValue(0.42);
+
+        bool found = false;
+        for (unsigned i = 0; i < shaderDesc->getNumUniforms(); ++i)
+        {
+            OCIO::GpuShaderDesc::UniformData data;
+            if (std::string(shaderDesc->getUniform(i, data)).find("pivotVal")
+                != std::string::npos)
+            {
+                found = true;
+                OCIO_CHECK_EQUAL(data.m_getDouble(), 0.42);
+            }
+        }
+        OCIO_CHECK_ASSERT(found);
+    }
+
+    // Stated separately so a legitimate update of the expected text cannot restore a literal.
+    OCIO_CHECK_ASSERT(text.find("float ocio_exposure_contrast_pivotVal;") != std::string::npos);
+    OCIO_CHECK_ASSERT(text.find("0.18") == std::string::npos);
+
+    // Changing a dynamic pivot must not change the source.  Every style, since each one
+    // converts the pivot differently.
+    for (auto style : { OCIO::EXPOSURE_CONTRAST_LINEAR,
+                        OCIO::EXPOSURE_CONTRAST_VIDEO,
+                        OCIO::EXPOSURE_CONTRAST_LOGARITHMIC })
+    for (auto dir : { OCIO::TRANSFORM_DIR_FORWARD, OCIO::TRANSFORM_DIR_INVERSE })
+    for (auto lang : { OCIO::GPU_LANGUAGE_GLSL_1_3, OCIO::GPU_LANGUAGE_MSL_2_0 })
+    {
+        auto dyn = OCIO::ExposureContrastTransform::Create();
+        dyn->setStyle(style);
+        dyn->setDirection(dir);
+        dyn->setPivot(0.18);
+        dyn->makePivotDynamic();
+
+        const std::string a = shaderText(dyn, lang);
+        dyn->setPivot(0.87);
+        const std::string b = shaderText(dyn, lang);
+        dyn->setPivot(0.0002);   // Below EC::MIN_PIVOT, exercising the clamp.
+        const std::string c = shaderText(dyn, lang);
+
+        OCIO_CHECK_EQUAL(a, b);
+        OCIO_CHECK_EQUAL(b, c);
+        OCIO_CHECK_ASSERT(a.find("pivotVal") != std::string::npos);
+
+        // The converse, so the test cannot pass by shader generation ignoring the pivot.
+        auto stat = OCIO::ExposureContrastTransform::Create();
+        stat->setStyle(style);
+        stat->setDirection(dir);
+        stat->setPivot(0.18);
+
+        const std::string sa = shaderText(stat, lang);
+        stat->setPivot(0.87);
+        const std::string sb = shaderText(stat, lang);
+
+        OCIO_CHECK_ASSERT(sa != sb);
+        OCIO_CHECK_ASSERT(sa.find("pivotVal") == std::string::npos);
+    }
+}
+
 OCIO_ADD_TEST(GpuShader, VulkanSupport)
 {
     OCIO::ConfigRcPtr config = OCIO::Config::Create();

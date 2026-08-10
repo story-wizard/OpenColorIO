@@ -77,9 +77,11 @@ typedef OCIO_SHARED_PTR<const ExposureContrastOpData> ConstExposureContrastOpDat
 //   logPivot = log2( pivot / 0.18 ) * logExposureStep + logMidGray
 //   OUT = ( IN + exposure * logExposureStep - logPivot ) * contrast + logPivot
 // 
-// The pivot, logExposureStep, and logMidGray are settable (non-dynamic)
-// parameters.
-// 
+// The logExposureStep and logMidGray are settable (non-dynamic) parameters.
+//
+// The pivot may also be made dynamic.  Unlike the other three it is not
+// serialized, see makePivotDynamic in the public header.
+//
 // Consider the following simplistic conversions from scene-linear to video and
 // logarithmic space:
 // 
@@ -186,8 +188,8 @@ public:
     double getGamma() const { return m_gamma->getValue(); }
     void setGamma(double gamma) { m_gamma->setValue(gamma); }
 
-    double getPivot() const { return m_pivot; }
-    void setPivot(double pivot) { m_pivot = pivot; }
+    double getPivot() const { return m_pivot->getValue(); }
+    void setPivot(double pivot) { m_pivot->setValue(pivot); }
 
     double getLogExposureStep() const { return m_logExposureStep; }
     void setLogExposureStep(double step) { m_logExposureStep = step; }
@@ -207,6 +209,10 @@ public:
     {
         return m_gamma;
     }
+    DynamicPropertyDoubleImplRcPtr getPivotProperty() const
+    {
+        return m_pivot;
+    }
 
     static constexpr double LOGEXPOSURESTEP_DEFAULT = 0.088;
     static constexpr double LOGMIDGRAY_DEFAULT = 0.435;
@@ -218,7 +224,7 @@ private:
     DynamicPropertyDoubleImplRcPtr m_exposure;
     DynamicPropertyDoubleImplRcPtr m_contrast;
     DynamicPropertyDoubleImplRcPtr m_gamma;
-    double m_pivot = 0.18;
+    DynamicPropertyDoubleImplRcPtr m_pivot;
     double m_logExposureStep = LOGEXPOSURESTEP_DEFAULT;
     double m_logMidGray = LOGMIDGRAY_DEFAULT;
 };

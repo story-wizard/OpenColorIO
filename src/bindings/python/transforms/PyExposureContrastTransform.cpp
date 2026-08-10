@@ -26,7 +26,8 @@ void bindPyExposureContrastTransform(py::module & m)
                          bool dynamicExposure,
                          bool dynamicContrast,
                          bool dynamicGamma,
-                         TransformDirection dir) 
+                         TransformDirection dir,
+                         bool dynamicPivot)
             {
                 ExposureContrastTransformRcPtr p = ExposureContrastTransform::Create();
                 p->setStyle(style);
@@ -39,6 +40,7 @@ void bindPyExposureContrastTransform(py::module & m)
                 if (dynamicExposure) { p->makeExposureDynamic(); }
                 if (dynamicContrast) { p->makeContrastDynamic(); }
                 if (dynamicGamma)    { p->makeGammaDynamic(); }
+                if (dynamicPivot)    { p->makePivotDynamic(); }
                 p->setDirection(dir);
                 p->validate();
                 return p;
@@ -53,7 +55,8 @@ void bindPyExposureContrastTransform(py::module & m)
              "dynamicExposure"_a = DEFAULT->isExposureDynamic(),
              "dynamicContrast"_a = DEFAULT->isContrastDynamic(),
              "dynamicGamma"_a = DEFAULT->isGammaDynamic(),
-             "direction"_a = DEFAULT->getDirection(), 
+             "direction"_a = DEFAULT->getDirection(),
+             "dynamicPivot"_a = DEFAULT->isPivotDynamic(),
              DOC(ExposureContrastTransform, Create))
 
         .def("getFormatMetadata", 
@@ -99,8 +102,14 @@ void bindPyExposureContrastTransform(py::module & m)
              DOC(ExposureContrastTransform, makeGammaNonDynamic))
         .def("getPivot", &ExposureContrastTransform::getPivot, 
              DOC(ExposureContrastTransform, getPivot))
-        .def("setPivot", &ExposureContrastTransform::setPivot, "pivot"_a, 
+        .def("setPivot", &ExposureContrastTransform::setPivot, "pivot"_a,
              DOC(ExposureContrastTransform, setPivot))
+        .def("isPivotDynamic", &ExposureContrastTransform::isPivotDynamic,
+             DOC(ExposureContrastTransform, isPivotDynamic))
+        .def("makePivotDynamic", &ExposureContrastTransform::makePivotDynamic,
+             DOC(ExposureContrastTransform, makePivotDynamic))
+        .def("makePivotNonDynamic", &ExposureContrastTransform::makePivotNonDynamic,
+             DOC(ExposureContrastTransform, makePivotNonDynamic))
         .def("getLogExposureStep", &ExposureContrastTransform::getLogExposureStep, 
              DOC(ExposureContrastTransform, getLogExposureStep))
         .def("setLogExposureStep", &ExposureContrastTransform::setLogExposureStep, 

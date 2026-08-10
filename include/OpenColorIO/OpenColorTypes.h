@@ -574,7 +574,8 @@ enum DynamicPropertyType
     DYNAMIC_PROPERTY_GRADING_PRIMARY,  ///< Used by GradingPrimaryTransform
     DYNAMIC_PROPERTY_GRADING_RGBCURVE, ///< Used by GradingRGBCurveTransform
     DYNAMIC_PROPERTY_GRADING_TONE,     ///< Used by GradingToneTransform
-    DYNAMIC_PROPERTY_GRADING_HUECURVE  ///< Used by GradingHueCurveTransform
+    DYNAMIC_PROPERTY_GRADING_HUECURVE, ///< Used by GradingHueCurveTransform
+    DYNAMIC_PROPERTY_PIVOT             ///< Contrast/gamma pivot (double floating point value)
 };
 
 /// Types for GradingRGBCurve.

@@ -163,6 +163,21 @@ void ExposureContrastTransformImpl::setPivot(double pivot)
     data().setPivot(pivot);
 }
 
+void ExposureContrastTransformImpl::makePivotDynamic()
+{
+    data().getPivotProperty()->makeDynamic();
+}
+
+void ExposureContrastTransformImpl::makePivotNonDynamic()
+{
+    data().getPivotProperty()->makeNonDynamic();
+}
+
+bool ExposureContrastTransformImpl::isPivotDynamic() const
+{
+    return data().getPivotProperty()->isDynamic();
+}
+
 double ExposureContrastTransformImpl::getLogExposureStep() const
 {
     return data().getLogExposureStep();
@@ -207,6 +222,10 @@ std::ostream& operator<< (std::ostream & os, const ExposureContrastTransform & t
     if (t.isGammaDynamic())
     {
         os << ", gammaDynamic";
+    }
+    if (t.isPivotDynamic())
+    {
+        os << ", pivotDynamic";
     }
 
     os << ">";

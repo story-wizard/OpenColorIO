@@ -144,6 +144,17 @@ class ExposureContrastTransformTest(unittest.TestCase, TransformsBaseTest):
             with self.assertRaises(TypeError):
                 self.tr.setPivot(invalid)
 
+    def test_pivot_dynamic(self):
+        """
+        Test the isPivotDynamic() and makePivotDynamic() methods.
+        """
+
+        # Default initialized property is False.
+        self.assertEqual(self.tr.isPivotDynamic(), False)
+
+        self.tr.makePivotDynamic()
+        self.assertEqual(self.tr.isPivotDynamic(), True)
+
     def test_log_exposure_step(self):
         """
         Test the setLogExposureStep() and getLogExposureStep() methods.

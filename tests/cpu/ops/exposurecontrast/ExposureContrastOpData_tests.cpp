@@ -332,3 +332,64 @@ OCIO_ADD_TEST(ExposureContrastOpData, replace_dynamic_property)
                      OCIO::Exception);
     OCIO_CHECK_THROW(ec1.getDynamicProperty(OCIO::DYNAMIC_PROPERTY_CONTRAST), OCIO::Exception);
 }
+
+OCIO_ADD_TEST(ExposureContrastOpData, dynamic_pivot)
+{
+    OCIO::ExposureContrastOpData ec(OCIO::ExposureContrastOpData::STYLE_LINEAR);
+
+    OCIO_CHECK_ASSERT(!ec.getPivotProperty()->isDynamic());
+    OCIO_CHECK_ASSERT(!ec.hasDynamicProperty(OCIO::DYNAMIC_PROPERTY_PIVOT));
+    OCIO_CHECK_THROW(ec.getDynamicProperty(OCIO::DYNAMIC_PROPERTY_PIVOT), OCIO::Exception);
+
+    // Identity by value, but must not be reported as one or the optimizer drops the op.
+    ec.getPivotProperty()->makeDynamic();
+    OCIO_CHECK_ASSERT(ec.isDynamic());
+    OCIO_CHECK_ASSERT(!ec.isIdentity());
+    OCIO_CHECK_ASSERT(!ec.isNoOp());
+    OCIO_CHECK_ASSERT(ec.hasDynamicProperty(OCIO::DYNAMIC_PROPERTY_PIVOT));
+    OCIO_CHECK_NO_THROW(ec.getDynamicProperty(OCIO::DYNAMIC_PROPERTY_PIVOT));
+
+    // A dynamic pivot must not share a cache ID with a static one, since the two generate
+    // different shaders.
+    OCIO::ExposureContrastOpData stat(OCIO::ExposureContrastOpData::STYLE_LINEAR);
+    OCIO_CHECK_ASSERT(ec.getCacheID() != stat.getCacheID());
+
+    // Its value is runtime state though, so it does not take part in the identity.
+    OCIO::ExposureContrastOpData other(OCIO::ExposureContrastOpData::STYLE_LINEAR);
+    other.getPivotProperty()->makeDynamic();
+    other.setPivot(0.5);
+    OCIO_CHECK_EQUAL(ec.getCacheID(), other.getCacheID());
+
+    // Same rule as the other three: two dynamic properties never compare equal, and a
+    // dynamic one never equals a static one.
+    OCIO_CHECK_ASSERT(!(ec == other));
+    OCIO_CHECK_ASSERT(!(ec == stat));
+
+    // Two static pivots at the same value do compare equal.  This breaks if the type is
+    // missing from the double branch of DynamicPropertyImpl::equals, and isInverse with it.
+    OCIO::ExposureContrastOpData stat2(OCIO::ExposureContrastOpData::STYLE_LINEAR);
+    OCIO_CHECK_ASSERT(stat == stat2);
+    stat2.setPivot(0.5);
+    OCIO_CHECK_ASSERT(!(stat == stat2));
+
+    // clone() carries the dynamic flag and the value.
+    auto cloned = ec.clone();
+    OCIO_CHECK_ASSERT(cloned->getPivotProperty()->isDynamic());
+    OCIO_CHECK_EQUAL(cloned->getPivot(), ec.getPivot());
+
+    ec.removeDynamicProperties();
+    OCIO_CHECK_ASSERT(!ec.getPivotProperty()->isDynamic());
+    OCIO_CHECK_ASSERT(!ec.isDynamic());
+
+    // replaceDynamicProperty needs an enabled property, same as the other three.
+    OCIO::ExposureContrastOpData a(OCIO::ExposureContrastOpData::STYLE_LINEAR);
+    OCIO::ExposureContrastOpData b(OCIO::ExposureContrastOpData::STYLE_LINEAR);
+    a.getPivotProperty()->makeDynamic();
+    auto prop = a.getPivotProperty();
+    OCIO_CHECK_THROW(b.replaceDynamicProperty(OCIO::DYNAMIC_PROPERTY_PIVOT, prop),
+                     OCIO::Exception);
+    b.getPivotProperty()->makeDynamic();
+    OCIO_CHECK_NO_THROW(b.replaceDynamicProperty(OCIO::DYNAMIC_PROPERTY_PIVOT, prop));
+    OCIO_CHECK_EQUAL(a.getDynamicProperty(OCIO::DYNAMIC_PROPERTY_PIVOT).get(),
+                     b.getDynamicProperty(OCIO::DYNAMIC_PROPERTY_PIVOT).get());
+}

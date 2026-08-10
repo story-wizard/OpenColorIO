@@ -80,6 +80,7 @@ bool DynamicPropertyImpl::equals(const DynamicPropertyImpl & rhs) const
             case DYNAMIC_PROPERTY_CONTRAST:
             case DYNAMIC_PROPERTY_EXPOSURE:
             case DYNAMIC_PROPERTY_GAMMA:
+            case DYNAMIC_PROPERTY_PIVOT:
             {
                 auto lhst = dynamic_cast<const DynamicPropertyDouble *>(this);
                 auto rhst = dynamic_cast<const DynamicPropertyDouble *>(&rhs);

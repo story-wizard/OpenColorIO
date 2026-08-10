@@ -398,6 +398,9 @@ void ValidateDynamicProperty(OpRcPtr op, std::shared_ptr<T> & prop, DynamicPrope
             case DYNAMIC_PROPERTY_GAMMA:
                 os << "Gamma";
                 break;
+            case DYNAMIC_PROPERTY_PIVOT:
+                os << "Pivot";
+                break;
             case DYNAMIC_PROPERTY_GRADING_PRIMARY:
                 os << "Grading primary";
                 break;
@@ -427,6 +430,7 @@ void OpRcPtrVec::validateDynamicProperties()
     DynamicPropertyDoubleImplRcPtr dpExposure;
     DynamicPropertyDoubleImplRcPtr dpContrast;
     DynamicPropertyDoubleImplRcPtr dpGamma;
+    DynamicPropertyDoubleImplRcPtr dpPivot;
     DynamicPropertyGradingPrimaryImplRcPtr dpGradingPrimary;
     DynamicPropertyGradingRGBCurveImplRcPtr dpGradingRGBCurve;
     DynamicPropertyGradingHueCurveImplRcPtr dpGradingHueCurve;
@@ -438,6 +442,7 @@ void OpRcPtrVec::validateDynamicProperties()
         ValidateDynamicProperty(op, dpExposure, DYNAMIC_PROPERTY_EXPOSURE);
         ValidateDynamicProperty(op, dpContrast, DYNAMIC_PROPERTY_CONTRAST);
         ValidateDynamicProperty(op, dpGamma, DYNAMIC_PROPERTY_GAMMA);
+        ValidateDynamicProperty(op, dpPivot, DYNAMIC_PROPERTY_PIVOT);
         ValidateDynamicProperty(op, dpGradingPrimary, DYNAMIC_PROPERTY_GRADING_PRIMARY);
         ValidateDynamicProperty(op, dpGradingRGBCurve, DYNAMIC_PROPERTY_GRADING_RGBCURVE);
         ValidateDynamicProperty(op, dpGradingHueCurve, DYNAMIC_PROPERTY_GRADING_HUECURVE);
