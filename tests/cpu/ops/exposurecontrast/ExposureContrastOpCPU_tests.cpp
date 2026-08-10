@@ -332,7 +332,7 @@ OCIO_ADD_TEST(ExposureContrastRenderer, linear)
 
 namespace
 {
-void TestECInverse(OCIO::ExposureContrastOpData::Style style)
+void TestECInverse(OCIO::ExposureContrastOpData::Style style, double logExposureStep)
 {
     const std::vector<float> rgbaImage { 0.0f, 0.5f, 1.f,     0.f,
                                          0.2f, 0.8f,  .99f, 128.f };
@@ -344,6 +344,7 @@ void TestECInverse(OCIO::ExposureContrastOpData::Style style)
     ec->setContrast(0.5);
     ec->setGamma(1.1);
     ec->setPivot(0.18);
+    ec->setLogExposureStep(logExposureStep);
 
     OCIO::ConstExposureContrastOpDataRcPtr const_ec = ec;
     OCIO::OpCPURcPtr renderer = OCIO::GetExposureContrastCPURenderer(const_ec);
@@ -366,6 +367,11 @@ void TestECInverse(OCIO::ExposureContrastOpData::Style style)
     OCIO_CHECK_CLOSE(rgba[5], rgbaImage[5], error);
     OCIO_CHECK_CLOSE(rgba[6], rgbaImage[6], error);
     OCIO_CHECK_EQUAL(rgba[7], rgbaImage[7]);
+}
+
+void TestECInverse(OCIO::ExposureContrastOpData::Style style)
+{
+    TestECInverse(style, OCIO::ExposureContrastOpData::LOGEXPOSURESTEP_DEFAULT);
 }
 }
 
@@ -428,5 +434,16 @@ OCIO_ADD_TEST(ExposureContrastRenderer, log_params)
     TestLogParamForStyle(OCIO::ExposureContrastOpData::STYLE_LINEAR_REV, false);
     TestLogParamForStyle(OCIO::ExposureContrastOpData::STYLE_LOGARITHMIC, true);
     TestLogParamForStyle(OCIO::ExposureContrastOpData::STYLE_LOGARITHMIC_REV, true);
+}
+
+OCIO_ADD_TEST(ExposureContrastRenderer, log_exposure_step_inverse)
+{
+    // Both log CPU renderers must use the op's logExposureStep or they stop round
+    // tripping.  (The GPU shader already reads it directly.)  ACEScct uses 0.057
+    // and LogC 0.074, versus the 0.088 default.
+    TestECInverse(OCIO::ExposureContrastOpData::STYLE_LOGARITHMIC, 0.057);
+    TestECInverse(OCIO::ExposureContrastOpData::STYLE_LOGARITHMIC_REV, 0.057);
+    TestECInverse(OCIO::ExposureContrastOpData::STYLE_LOGARITHMIC, 0.074);
+    TestECInverse(OCIO::ExposureContrastOpData::STYLE_LOGARITHMIC_REV, 0.074);
 }
 

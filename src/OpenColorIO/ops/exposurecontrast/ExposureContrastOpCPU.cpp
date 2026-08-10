@@ -654,6 +654,8 @@ void ECLogarithmicRevRenderer::updateData(ConstExposureContrastOpDataRcPtr & ec)
     m_pivot = (float)std::max(0., log2(pivot / 0.18) *
                                   ec->getLogExposureStep() +
                                   ec->getLogMidGray());
+
+    m_logExposureStep = (float)ec->getLogExposureStep();
 }
 
 void ECLogarithmicRevRenderer::apply(const void * inImg, void * outImg, long numPixels) const
