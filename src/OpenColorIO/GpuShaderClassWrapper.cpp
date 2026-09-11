@@ -356,9 +356,11 @@ std::string MetalShaderClassWrapper::rewriteArrayDeclarations(const std::string&
 {
     // The uniform declarations are shared with the other GPU languages so arrays arrive here as
     // fixed-size members i.e. 'float name[120];'. Owning them would make the constructor copy the
-    // whole array out of constant memory into per-thread memory, which is prohibitive as the
-    // struct is typically instantiated once per pixel. Hold a pointer to the constant memory
-    // instead; every read site is unchanged as the indexing syntax is the same.
+    // whole array out of constant memory into per-thread memory. The struct is constructed inside
+    // the generated OCIOMain(), which takes and returns a single pixel, so that copy is paid once
+    // per invocation: once per pixel for a fragment shader or a one-thread-per-pixel kernel. Hold
+    // a pointer to the constant memory instead; every read site is unchanged as the indexing
+    // syntax is the same.
     //
     // Note that nothing zero-fills the members between the array length and the declared capacity
     // any more. An op declaring an array uniform must therefore keep its reads below the length it

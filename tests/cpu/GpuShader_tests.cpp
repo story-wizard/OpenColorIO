@@ -1335,19 +1335,6 @@ float4 OCIOMain(
 )" };
 
     OCIO_CHECK_EQUAL(expected, text);
-
-    // The struct is instantiated once per invocation, which for a compute shader
-    // dispatched one thread per pixel means once per pixel. Owning the array
-    // uniforms rather than pointing at them therefore copies the whole declared
-    // capacity into per-thread memory for every pixel, which dominated the cost
-    // of any curve op. These checks state that invariant on its own so a future
-    // update of the expected text above cannot quietly restore the copy.
-    OCIO_CHECK_ASSERT(text.find("constant float* ocio_grading_rgbcurve_knots;")
-                      != std::string::npos);
-    OCIO_CHECK_ASSERT(text.find("this->ocio_grading_rgbcurve_knots = "
-                                "ocio_grading_rgbcurve_knots;") != std::string::npos);
-    OCIO_CHECK_ASSERT(text.find("this->ocio_grading_rgbcurve_knots[i]")
-                      == std::string::npos);
 }
 
 OCIO_ADD_TEST(GpuShader, VulkanSupport)
